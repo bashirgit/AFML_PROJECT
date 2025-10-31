@@ -76,11 +76,6 @@ def generate_sequence(model, tokenizer, seq_length, num_iterations,
                       temperature, top_k, top_p):
     """Generate a protein sequence via iterative masked LM sampling."""
     
-    # Track memory BEFORE generation starts
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats(DEVICE)
-        initial_memory = torch.cuda.memory_allocated(DEVICE) / 1024**2  # MB
-
     # Initialize random sequence
     seq = list(random_init_sequence(seq_length))
     input_ids = tokenizer("".join(seq), return_tensors="pt", add_special_tokens=True)["input_ids"].to(DEVICE)
@@ -142,24 +137,19 @@ def generate_sequence(model, tokenizer, seq_length, num_iterations,
     decoded_seq = tokenizer.decode(input_ids, skip_special_tokens=True)
     decoded_seq = "".join([c for c in decoded_seq if c in AMINO_ACIDS])
 
-    # Memory usage
-    if torch.cuda.is_available():
-        peak_memory = torch.cuda.max_memory_allocated(DEVICE) / 1024**2
-        memory_used = peak_memory - initial_memory
-    else:
-        memory_used = 0.0
-
     # Calculate metrics
     avg_iter_latency = statistics.mean(iteration_latencies)
     # Throughput: tokens generated per second (excluding special tokens)
     throughput = actual_seq_length / total_time if total_time > 0 else 0
 
-    return decoded_seq, total_time, memory_used, avg_iter_latency, throughput, actual_seq_length
+    return decoded_seq, total_time, avg_iter_latency, throughput, actual_seq_length
 
 
 # ===============================
 # MAIN GENERATION LOOP
 # ===============================
+s1, g1, av1, t1, a1 = generate_sequence(model, tokenizer, SEQ_LENGTH, 10,TEMPERATURE, TOP_K, TOP_P) #Warmup
+
 
 print(f"🚀 Generating {NUM_SEQUENCES} sequences ({SEQ_LENGTH} AA, {NUM_ITERATIONS} iterations each)...\n")
 
@@ -169,6 +159,8 @@ csv_header = [
     'temperature', 'top_k', 'top_p', 'num_iterations'
 ]
 
+all_memory_readings = []
+
 with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_out:
     csv_writer = csv.DictWriter(csv_out, fieldnames=csv_header)
     csv_writer.writeheader()
@@ -176,11 +168,26 @@ with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_
     for i in tqdm(range(NUM_SEQUENCES), desc="Generating sequences"):
         seq_id = f"seq_{i+1:05d}"
 
+        # Track memory BEFORE generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats(DEVICE)
+            initial_memory = torch.cuda.memory_allocated(DEVICE) / 1024**2  # MB
+
         # Generate sequence (timed separately)
-        sequence, gen_time, memory_used, avg_iter_latency, throughput, actual_len = generate_sequence(
+        sequence, gen_time, avg_iter_latency, throughput, actual_len = generate_sequence(
             model, tokenizer, SEQ_LENGTH, NUM_ITERATIONS,
             TEMPERATURE, TOP_K, TOP_P
         )
+
+        # Track memory AFTER generation
+        if torch.cuda.is_available():
+            peak_memory = torch.cuda.max_memory_allocated(DEVICE) / 1024**2
+            memory_used = peak_memory - initial_memory
+        else:
+            memory_used = 0.0
+        
+        all_memory_readings.append(memory_used)
 
         # Calculate perplexity AFTER generation (not included in timing)
         perplexity = calculate_perplexity(model, tokenizer, sequence)
@@ -205,3 +212,12 @@ with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_
 print("\n✅ Generation complete!")
 print(f"🧬 FASTA saved to: {FASTA_FILE}")
 print(f"📊 Log saved to:   {LOG_FILE}")
+
+# Print memory statistics
+if all_memory_readings:
+    print(f"\n💾 Memory Statistics:")
+    print(f"  Mean: {statistics.mean(all_memory_readings):.2f} MB")
+    print(f"  Median: {statistics.median(all_memory_readings):.2f} MB")
+    print(f"  Std Dev: {statistics.stdev(all_memory_readings):.2f} MB")
+    print(f"  Max: {max(all_memory_readings):.2f} MB")
+    print(f"  Min: {min(all_memory_readings):.2f} MB")
