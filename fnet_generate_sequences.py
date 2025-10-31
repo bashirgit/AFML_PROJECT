@@ -132,6 +132,9 @@ def generate_sequence(model, tokenizer, seq_length=120, num_iterations=40, tempe
 # ===============================
 # MAIN GENERATION LOOP
 # ===============================
+
+s1, g1, av1, t1, a1 = generate_sequence(model, tokenizer, SEQ_LENGTH, 10,TEMPERATURE, TOP_K, TOP_P) #Warmup
+
 print(f"\nGenerating {NUM_SEQUENCES} sequences...")
 print(f"Sequence length: {SEQ_LENGTH}")
 print(f"Iterations per sequence: {NUM_ITERATIONS}")
