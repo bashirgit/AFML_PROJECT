@@ -5,11 +5,13 @@ import csv
 from datetime import datetime
 from tqdm import tqdm
 import time
+import statistics
 
 # ===============================
 # CONFIG
 # ===============================
 MODEL_ID = "Rogue05/run_023_lr7e-05_wd0.05_bs2_ga4_len512"
+HF_TOKEN = "your_token_here"  # Add your token
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 MAX_MODEL_LENGTH = 512
@@ -29,8 +31,8 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(RANDOM_SEED)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-FASTA_FILE = f"generated_sequences_{TIMESTAMP}.fasta"
-LOG_FILE = f"generation_log_{TIMESTAMP}.csv"
+FASTA_FILE = f"generated_sequences_fnet_{TIMESTAMP}.fasta"
+LOG_FILE = f"generation_log_fnet_{TIMESTAMP}.csv"
 
 # ===============================
 # LOAD MODEL & TOKENIZER
@@ -59,24 +61,29 @@ def calculate_perplexity(model, tokenizer, sequence):
     return perplexity
 
 def generate_sequence(model, tokenizer, seq_length=120, num_iterations=40, temperature=1.0, top_k=0, top_p=1.0):
-    start_time = time.time()
     if seq_length > 510:
         raise ValueError(f"seq_length must be <= 510 (got {seq_length})")
     
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats(DEVICE)
-        initial_memory = torch.cuda.memory_allocated(DEVICE) / 1024**2
-
+    # Initialize sequence
     seq = list(random_init_sequence(seq_length))
     input_ids = tokenizer("".join(seq), return_tensors="pt", add_special_tokens=True)["input_ids"].to(DEVICE)
     input_ids = input_ids[0]
+    
+    # Store actual token count (excluding special tokens for fair comparison)
+    actual_seq_length = len(input_ids) - 2  # Exclude CLS and SEP tokens
 
-    per_token_latencies = []  # store latency per token
+    iteration_latencies = []
+    
+    # START TIMING: Only measure generation, not perplexity
+    start_time = time.time()
+    
     for _ in range(num_iterations):
         mask_pos = random.randint(1, len(input_ids) - 2)
         input_ids[mask_pos] = tokenizer.mask_token_id
 
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        
         iter_start = time.time()
 
         with torch.no_grad():
@@ -99,28 +106,28 @@ def generate_sequence(model, tokenizer, seq_length=120, num_iterations=40, tempe
             probs = torch.softmax(logits, dim=-1)
             pred_id = torch.multinomial(probs, 1).item()
 
-        torch.cuda.synchronize() if torch.cuda.is_available() else None
-        iter_end = time.time()
-        per_token_latencies.append(iter_end - iter_start)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        
+        iteration_latencies.append(time.time() - iter_start)
 
         pred_token = tokenizer.decode([pred_id]).strip()
         if pred_token in AMINO_ACIDS:
             input_ids[mask_pos] = pred_id
 
+    # END TIMING: Generation complete
+    total_time = time.time() - start_time
+
+    # Decode sequence (perplexity calculated separately in main loop)
     decoded_seq = tokenizer.decode(input_ids, skip_special_tokens=True)
     decoded_seq = "".join([c for c in decoded_seq if c in AMINO_ACIDS])
-    
-    total_time = time.time() - start_time
-    avg_token_latency = sum(per_token_latencies) / len(per_token_latencies)
-    throughput = len(input_ids) / total_time
 
-    if torch.cuda.is_available():
-        peak_memory = torch.cuda.max_memory_allocated(DEVICE) / 1024**2
-        memory_used = peak_memory - initial_memory
-    else:
-        memory_used = 0.0
+    # Calculate metrics
+    avg_iter_latency = statistics.mean(iteration_latencies)
+    # Throughput: tokens generated per second (excluding special tokens)
+    throughput = actual_seq_length / total_time if total_time > 0 else 0
 
-    return decoded_seq, total_time, memory_used, avg_token_latency, throughput
+    return decoded_seq, total_time, avg_iter_latency, throughput, actual_seq_length
 
 # ===============================
 # MAIN GENERATION LOOP
@@ -132,10 +139,12 @@ print(f"Output FASTA: {FASTA_FILE}")
 print(f"Output Log: {LOG_FILE}\n")
 
 csv_header = [
-    'seq_id', 'generation_time_sec', 'avg_token_latency_ms', 'throughput_tokens_per_sec',
-    'memory_usage_mb', 'sequence_length', 'perplexity',
+    'seq_id', 'sequence_length', 'generation_time_sec', 'avg_iter_latency_ms',
+    'throughput_tokens_per_sec', 'memory_usage_mb', 'perplexity',
     'seed', 'temperature', 'top_k', 'top_p', 'batch_size', 'num_iterations'
 ]
+
+all_memory_readings = []
 
 with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_out:
     csv_writer = csv.DictWriter(csv_out, fieldnames=csv_header)
@@ -144,21 +153,38 @@ with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_
     for i in tqdm(range(NUM_SEQUENCES), desc="Generating sequences"):
         seq_id = f"seq_{i+1:05d}"
         
-        seq, total_time, mem_used, avg_latency, throughput = generate_sequence(
+        # Track memory BEFORE generation
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats(DEVICE)
+            initial_memory = torch.cuda.memory_allocated(DEVICE) / 1024**2  # MB
+        
+        # Generate sequence (timed separately)
+        seq, gen_time, avg_iter_latency, throughput, actual_len = generate_sequence(
             model, tokenizer, SEQ_LENGTH, NUM_ITERATIONS, TEMPERATURE, TOP_K, TOP_P
         )
 
+        # Track memory AFTER generation
+        if torch.cuda.is_available():
+            peak_memory = torch.cuda.max_memory_allocated(DEVICE) / 1024**2
+            memory_used = peak_memory - initial_memory
+        else:
+            memory_used = 0.0
+        
+        all_memory_readings.append(memory_used)
+
+        # Calculate perplexity AFTER generation (not included in timing)
         perplexity = calculate_perplexity(model, tokenizer, seq)
 
         fasta_out.write(f">{seq_id}\n{seq}\n")
 
         csv_writer.writerow({
             'seq_id': seq_id,
-            'generation_time_sec': round(total_time, 4),
-            'avg_token_latency_ms': round(avg_latency * 1000, 3),
+            'sequence_length': actual_len,
+            'generation_time_sec': round(gen_time, 4),
+            'avg_iter_latency_ms': round(avg_iter_latency * 1000, 3),  # Convert to ms
             'throughput_tokens_per_sec': round(throughput, 2),
             'memory_usage_mb': round(mem_used, 2),
-            'sequence_length': len(seq),
             'perplexity': round(perplexity, 4),
             'seed': RANDOM_SEED,
             'temperature': TEMPERATURE,
@@ -175,5 +201,12 @@ print(f"\n✓ Generated {NUM_SEQUENCES} sequences")
 print(f"✓ FASTA file saved: {FASTA_FILE}")
 print(f"✓ Log file saved: {LOG_FILE}")
 print("\nGeneration complete!")
-#print("\n💡 Tip: Metrics follow best practices from:")
-#print("https://apxml.com/courses/quantized-llm-deployment/chapter-3-performance-evaluation-quantized-llms/measuring-inference-latency-throughput")
+
+# Print memory statistics
+if all_memory_readings:
+    print(f"\n💾 Memory Statistics:")
+    print(f"  Mean: {statistics.mean(all_memory_readings):.2f} MB")
+    print(f"  Median: {statistics.median(all_memory_readings):.2f} MB")
+    print(f"  Std Dev: {statistics.stdev(all_memory_readings):.2f} MB")
+    print(f"  Max: {max(all_memory_readings):.2f} MB")
+    print(f"  Min: {min(all_memory_readings):.2f} MB")
