@@ -1,0 +1,5 @@
+Dataset,N,Mean_Hybrid_pLDDT,SD,95%_CI_Low,95%_CI_High
+kinases_cluster_train_10k,200,0.8356,0.0589,0.8273,0.8438
+fnet_generated_sequences_2000,200,0.9718,0.009,0.9705,0.973
+progen_gen_2000,200,0.9089,0.0485,0.9021,0.9156
+esm_generated_2000,200,0.9741,0.009,0.9728,0.9753
