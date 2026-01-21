@@ -4,10 +4,6 @@ import random, csv, time, statistics, math
 from tqdm import tqdm
 from datetime import datetime
 
-# ===============================
-# CONFIGURATION
-# ===============================
-
 MODEL_ID = "PES1UG23AM235/run_021_lr7e-05_wd0.05_bs1_ga4_len512"
 HF_TOKEN = ""
 
@@ -33,11 +29,10 @@ LOG_FILE = f"esm_generation_log_{TIMESTAMP}.csv"
 
 AMINO_ACIDS = list("ACDEFGHIKLMNPQRSTVWY")
 
-# ===============================
-# LOAD MODEL & TOKENIZER
-# ===============================
 
-print("\n🔹 Loading model and tokenizer...")
+
+
+print("\n Loading model and tokenizer...")
 
 TOKENIZER_BACKBONE = "facebook/esm2_t6_8M_UR50D"
 tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_BACKBONE)
@@ -45,12 +40,11 @@ model = AutoModelForMaskedLM.from_pretrained(MODEL_ID, token=HF_TOKEN)
 model.to(DEVICE)
 model.eval()
 
-print(f"✅ Model loaded from: {MODEL_ID}")
-print(f"✅ Running on device: {DEVICE}\n")
+print(f"Model loaded from: {MODEL_ID}")
+print(f"Running on device: {DEVICE}\n")
 
-# ===============================
-# FUNCTIONS
-# ===============================
+
+
 
 def random_init_sequence(length):
     """Generate a random amino acid sequence of given length."""
@@ -129,15 +123,14 @@ def generate_sequence_with_self_ppl(model, tokenizer, seq_length, num_iterations
     decoded_seq = tokenizer.decode(input_ids, skip_special_tokens=True)
     decoded_seq = "".join([c for c in decoded_seq if c in AMINO_ACIDS])
 
-    # Convert average step loss to self-perplexity
+    # Converting the average step loss to self-perplexity
     avg_step_loss = statistics.mean(step_losses)
     self_perplexity = torch.exp(torch.tensor(avg_step_loss)).item()
 
-    # Get peak memory usage
     if DEVICE == "cuda":
         memory_used = torch.cuda.max_memory_allocated() / (1024 ** 2)  # Convert to MB
     else:
-        memory_used = 0.0  # Placeholder for CPU
+        memory_used = 0.0  
 
     return decoded_seq, total_time, avg_iter_latency, throughput, self_perplexity, memory_used
 
@@ -149,12 +142,10 @@ def compute_summary_stats(values):
     ci_margin = 1.96 * (sd / math.sqrt(n)) if n > 1 else 0
     return mean, sd, (mean - ci_margin, mean + ci_margin)
 
-# ===============================
-# MAIN GENERATION LOOP
-# ===============================
+
 
 # Warm-up runs
-print("🔥 Performing warm-up runs...")
+print("Performing warm-up runs...")
 _ = generate_sequence_with_self_ppl(
     model, tokenizer, SEQ_LENGTH, NUM_ITERATIONS, TEMPERATURE, TOP_K, TOP_P
 )
@@ -165,7 +156,7 @@ _ = generate_sequence_with_self_ppl(
     model, tokenizer, SEQ_LENGTH, NUM_ITERATIONS, TEMPERATURE, TOP_K, TOP_P
 )
 
-print(f"🚀 Generating {NUM_SEQUENCES} sequences...\n")
+print(f"Generating {NUM_SEQUENCES} sequences...\n")
 
 csv_header = [
     'seq_id', 'generation_time_sec', 'avg_token_latency_ms', 'throughput_tokens_per_sec',
@@ -217,13 +208,11 @@ with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_
             "num_iterations": NUM_ITERATIONS
         })
 
-print("\n✅ Generation complete!")
-print(f"🧬 FASTA saved to: {FASTA_FILE}")
-print(f"📊 Log saved to:   {LOG_FILE}")
+print("\n Generation complete!")
+print(f" FASTA saved to: {FASTA_FILE}")
+print(f" Log saved to:   {LOG_FILE}")
 
-# ===============================
-# SUMMARY STATISTICS
-# ===============================
+
 
 metrics = {
     "Generation Time (s)": gen_times,
@@ -235,7 +224,7 @@ metrics = {
     "Memory Usage (MB)": memory_usage
 }
 
-print("\n📈 Summary Statistics Across Sequences:")
+print("\n Summary Statistics Across Sequences:")
 print(f"{'Metric':<30}{'Mean':>12}{'SD':>12}{'95% CI (Lower, Upper)':>35}")
 print("-" * 90)
 
@@ -244,4 +233,4 @@ for name, values in metrics.items():
     print(f"{name:<30}{mean:>12.4f}{sd:>12.4f}{str((round(ci[0],4), round(ci[1],4))):>35}")
 
 print("-" * 90)
-print("\n✅ Full statistical summary computed successfully!")
+print("\n Full statistical summary computed successfully!")
