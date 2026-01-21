@@ -9,11 +9,9 @@ import math
 import statistics
 import os
 
-# ===============================
-# CONFIG
-# ===============================
+
 MODEL_ID = "Rogue05/run_023_lr7e-05_wd0.05_bs2_ga4_len512"
-HF_TOKEN = ""  # Replace with your actual token or set as env variable
+HF_TOKEN = ""  
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}")
 
@@ -37,9 +35,7 @@ TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 FASTA_FILE = f"fnet_generated_sequences_{TIMESTAMP}.fasta"
 LOG_FILE = f"fnet_generation_log_{TIMESTAMP}.csv"
 
-# ===============================
-# LOAD MODEL & TOKENIZER
-# ===============================
+
 print("Loading model and tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained("facebook/esm2_t6_8M_UR50D")
 model = AutoModelForMaskedLM.from_pretrained(MODEL_ID, use_auth_token=HF_TOKEN)
@@ -49,9 +45,7 @@ print(f"Model loaded on {DEVICE}")
 
 AMINO_ACIDS = list("ACDEFGHIKLMNPQRSTVWY")
 
-# ===============================
-# FUNCTIONS
-# ===============================
+
 def random_init_sequence(length):
     return "".join(random.choices(AMINO_ACIDS, k=length))
 
@@ -132,11 +126,10 @@ def generate_sequence(model, tokenizer, seq_length=120, num_iterations=40,
     else:
         self_perplexity = float('nan')
 
-    # Get peak memory usage
     if DEVICE == "cuda":
-        memory_used = torch.cuda.max_memory_allocated() / (1024 ** 2)  # Convert to MB
+        memory_used = torch.cuda.max_memory_allocated() / (1024 ** 2)  
     else:
-        memory_used = 0.0  # Placeholder for CPU
+        memory_used = 0.0  
 
     return decoded_seq, total_time, avg_token_latency, throughput, self_perplexity, memory_used
 
@@ -151,7 +144,7 @@ def compute_summary(values):
 
 
 # Warm-up runs
-print("🔥 Performing warm-up runs...")
+print("Performing warm-up runs...")
 _ = generate_sequence(
     model, tokenizer, SEQ_LENGTH, NUM_ITERATIONS, TEMPERATURE, TOP_K, TOP_P
 )
@@ -162,9 +155,7 @@ _ = generate_sequence(
     model, tokenizer, SEQ_LENGTH, NUM_ITERATIONS, TEMPERATURE, TOP_K, TOP_P
 )
 
-# ===============================
-# MAIN GENERATION LOOP
-# ===============================
+
 print(f"\nGenerating {NUM_SEQUENCES} sequences...")
 print(f"Sequence length: {SEQ_LENGTH}")
 print(f"Iterations per sequence: {NUM_ITERATIONS}")
@@ -221,20 +212,17 @@ with open(FASTA_FILE, 'w') as fasta_out, open(LOG_FILE, 'w', newline='') as csv_
         seq_lengths.append(len(seq))
         memory_usage.append(memory_used)
 
-        # Print progress every 100 sequences
         if (i + 1) % 100 == 0:
             print(f"[{seq_id}] self-PPL: {self_ppl:.2f}, post-hoc PPL: {posthoc_ppl:.2e}, memory: {memory_used:.2f} MB")
 
         fasta_out.flush()
         csv_out.flush()
 
-print(f"\n✓ Generated {NUM_SEQUENCES} sequences")
-print(f"✓ FASTA file saved: {FASTA_FILE}")
-print(f"✓ Log file saved: {LOG_FILE}")
+print(f"\n Generated {NUM_SEQUENCES} sequences")
+print(f" FASTA file saved: {FASTA_FILE}")
+print(f" Log file saved: {LOG_FILE}")
 
-# ===============================
-# SUMMARY STATISTICS
-# ===============================
+
 
 metrics = {
     "Generation Time (s)": gen_times,
@@ -246,7 +234,7 @@ metrics = {
     "Memory Usage (MB)": memory_usage
 }
 
-print("\n📈 Summary Statistics Across Sequences:")
+print("\n Summary Statistics Across Sequences:")
 print(f"{'Metric':<30}{'Mean':>12}{'SD':>12}{'95% CI (Lower, Upper)':>35}")
 print("-" * 90)
 for name, values in metrics.items():
@@ -254,4 +242,4 @@ for name, values in metrics.items():
     print(f"{name:<30}{mean:>12.4f}{sd:>12.4f}{str((round(ci[0],4), round(ci[1],4))):>35}")
 print("-" * 90)
 
-print("\n✅ Generation complete with full statistical summary!")
+print("\n Generation complete with full statistical summary!")
