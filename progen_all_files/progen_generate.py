@@ -5,17 +5,15 @@ from datetime import datetime
 from transformers import AutoTokenizer
 from progen.progen2.models.progen.modeling_progen import ProGenForCausalLM
 
-# ======================================================
-# CONFIGURATION
-# ======================================================
-MODEL_ID = "pedriGavi/run_004_lr3e-05_wd0.01_bs2_ga8_len512" # Pretrained ProGen model ID sachin model 15
+
+MODEL_ID = "pedriGavi/run_004_lr3e-05_wd0.01_bs2_ga8_len512"
 HF_TOKEN = ""
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 RANDOM_SEED = 42
 NUM_SEQUENCES = 5
-PROMPT_LENGTH = 0  # EMPTY PROMPT - generate from scratch like FNet/ESM
-TARGET_AA_LENGTH = 510  # Match FNet/ESM sequence length (actual amino acids, not tokens)
+PROMPT_LENGTH = 0  
+TARGET_AA_LENGTH = 510  
 TEMPERATURE = 1
 TOP_P = 1
 TOP_K = 0
@@ -31,14 +29,12 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 FASTA_FILE = f"progen_gen_{timestamp}.fasta"
 LOG_FILE   = f"progen_gen_log_{timestamp}.csv"
 
-# ======================================================
-# LOAD MODEL & TOKENIZER
-# ======================================================
-print("🔹 Loading model and tokenizer...")
+
+print(" Loading model and tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=HF_TOKEN)
 model = ProGenForCausalLM.from_pretrained(MODEL_ID, token=HF_TOKEN, ignore_mismatched_sizes=True)
 model.to(DEVICE).eval()
-print(f"✅ Model loaded from {MODEL_ID} on {DEVICE}")
+print(f" Model loaded from {MODEL_ID} on {DEVICE}")
 
 from types import MethodType
 import torch.nn.functional as F
@@ -47,26 +43,21 @@ def safe_forward(self, *args, **kwargs):
     out = self.__class__.forward(self, *args, **kwargs)
     if hasattr(out, "logits"):
         logits = out.logits
-        # replace NaN/inf
         logits = torch.nan_to_num(logits, nan=0.0, posinf=1e4, neginf=-1e4)
-        # clip to safe range
         logits = torch.clamp(logits, min=-50, max=50)
         out.logits = logits
     return out
 
-# attach patched forward to avoid overflow in sampling
 model.forward = MethodType(safe_forward, model)
-print("⚙️  Patched forward() for safe generation (logit clamp [-50, 50])")
+print("Patched forward() for safe generation (logit clamp [-50, 50])")
 
-# ======================================================
-# HELPER FUNCTIONS
-# ======================================================
+
 def random_init_sequence(length):
     """For empty prompt case, returns empty string"""
     if length == 0:
         return ""
     seq = "".join(random.choices(AMINO_ACIDS, k=length))
-    return " ".join(list(seq))  # spaced tokens
+    return " ".join(list(seq))  
 
 @torch.no_grad()
 def calc_perplexity(model, tokenizer, seq):
@@ -97,7 +88,6 @@ def generate_sequence_with_metrics(model, tokenizer, prompt_length, target_aa_le
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.empty_cache()
 
-    # prompt
     prompt = random_init_sequence(prompt_length)
     if prompt_length == 0:
         if getattr(tokenizer, "bos_token_id", None) is not None:
@@ -112,14 +102,13 @@ def generate_sequence_with_metrics(model, tokenizer, prompt_length, target_aa_le
         torch.cuda.synchronize()
     t0 = time.time()
 
-    # generation
     gen_out = model.generate(
         input_ids=input_ids,
         do_sample=True,
         temperature=temperature,
         top_k=top_k,
         top_p=top_p,
-        max_new_tokens=target_aa_length,  # allow extra for cleanup
+        max_new_tokens=target_aa_length, 
         eos_token_id=getattr(tokenizer, "eos_token_id", None),
         pad_token_id=getattr(tokenizer, "pad_token_id", None),
     )
@@ -156,19 +145,9 @@ def generate_sequence_with_metrics(model, tokenizer, prompt_length, target_aa_le
 
     return seq, gen_time, avg_token_latency, throughput, self_ppl, post_ppl, memory_used
 
-# ======================================================
-# WARM-UP RUNS
-# ======================================================
-print("🔥 Performing warm-up runs...")
-# for _ in range(3):
-#     _ = generate_sequence_with_metrics(
-#         model, tokenizer, PROMPT_LENGTH, TARGET_AA_LENGTH, TEMPERATURE, TOP_P, TOP_K
-#     )
 
-# ======================================================
-# MAIN GENERATION LOOP
-# ======================================================
-print(f"\n🚀 Generating {NUM_SEQUENCES} sequences...\n")
+
+print(f"\n Generating {NUM_SEQUENCES} sequences...\n")
 print(f"Target sequence length: {TARGET_AA_LENGTH} amino acids")
 print(f"Prompt length: {PROMPT_LENGTH} (empty prompt - generating from scratch)\n")
 
@@ -224,13 +203,11 @@ with open(FASTA_FILE, "w") as fasta_out, open(LOG_FILE, "w", newline="") as csv_
         fasta_out.flush()
         csv_out.flush()
 
-print(f"\n✅ Generation complete!")
-print(f"🧬 FASTA → {FASTA_FILE}")
-print(f"📊 Log   → {LOG_FILE}")
+print(f"\n Generation complete!")
+print(f" FASTA → {FASTA_FILE}")
+print(f" Log   → {LOG_FILE}")
 
-# ======================================================
-# SUMMARY STATISTICS
-# ======================================================
+
 metrics = {
     "Generation Time (s)": gen_times,
     "Avg Token Latency (ms)": avg_latencies,
@@ -241,7 +218,7 @@ metrics = {
     "Memory Usage (MB)": memory_usage
 }
 
-print("\n📈 Summary Statistics Across Sequences:")
+print("\n Summary Statistics Across Sequences:")
 print(f"{'Metric':<30}{'Mean':>12}{'SD':>12}{'95% CI (Lower, Upper)':>35}")
 print("-" * 90)
 
@@ -250,4 +227,4 @@ for name, vals in metrics.items():
     print(f"{name:<30}{mean:>12.4f}{sd:>12.4f}{str((round(ci[0],4), round(ci[1],4))):>35}")
 
 print("-" * 90)
-print("\n✅ Full statistical summary computed successfully!")
+print("\n Full statistical summary computed successfully!")
