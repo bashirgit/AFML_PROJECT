@@ -1,1 +1,1 @@
-# AFML_PROJECT
+# Fourier vs Attention
